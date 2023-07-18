@@ -2409,6 +2409,22 @@ static __u64 avail_size1(struct supertype *st, __u64 devsize,
 	return 0;
 }
 
+/*这是一个名为`add_internal_bitmap1()`的函数，用于向MD v1.0元数据中添加内部位图。
+
+函数接受一个指向`struct supertype`结构的指针`st`，一个指向整数的指针`chunkp`，整数类型的参数`delay`、`write_behind`、`may_change`和`major`，以及一个`unsigned long long`类型的参数`size`。
+
+函数根据传入的参数和元数据的版本进行不同的操作：
+- 如果元数据的`minor_version`为0，表示MD v1.0，根据是否在创建数组和是否支持sysfs来确定位图的位置和空间。如果在创建数组，则将位图放置在超级块之后的3K偏移处；否则，根据`may_change`参数的值确定是否可以将位图放置在任意位置，如果不行，则将位图放置在超级块之后的1K偏移处。
+- 如果元数据的`minor_version`为1或2，表示MD v1.1或v1.2，根据是否在创建数组和是否支持sysfs来确定位图的位置和空间。如果在创建数组，则将位图放置在超级块之后的4K偏移处；否则，根据`may_change`参数的值确定是否可以将位图放置在任意位置，如果不行，则将位图放置在超级块之后的4K偏移处。
+
+接下来，函数计算位图的大小和块大小，根据传入的`size`参数和最小块大小4096字节进行计算，并根据最大位图空间调整块大小。如果`chunk`参数为`UnSet`，则将块大小设置为默认值64M；如果`chunk`小于最小块大小，则返回错误。
+
+然后，根据位图的位置和大小更新超级块中的位图偏移、特征映射等字段，并初始化位图超级块`bms`的内容。根据`may_change`参数的值，确定是否将节点数、集群名称等信息写入位图超级块。
+
+最后，将更新后的块大小写入`chunkp`指向的内存，并返回0表示成功。
+
+该函数的作用是根据传入的参数向MD v1.0元数据中添加内部位图，并更新相应的超级块字段。
+*/
 static int
 add_internal_bitmap1(struct supertype *st,
 		     int *chunkp, int delay, int write_behind,
@@ -2602,6 +2618,30 @@ static int locate_bitmap1(struct supertype *st, int fd, int node_num)
 	return ret;
 }
 
+/*
+这是一个名为`write_bitmap1()`的函数，用于写入MD v1.0元数据中的位图信息。
+该函数接受一个指向`struct supertype`结构的指针`st`、一个文件描述符`fd`以及一个枚举类型`enum bitmap_update`作为参数。
+函数首先从`st->sb`中获取指向位图超级块的指针`bms`。
+根据传入的`update`参数的值，函数执行不同的操作：
+- 如果`update`为`NameUpdate`，则更新位图超级块中的集群名称。
+- 如果`update`为`NodeNumUpdate`，则更新位图超级块中的节点数。
+- 如果`update`为`NoUpdate`或其他值，则不执行任何更新操作。
+接下来，函数初始化一个`struct align_fd`类型的结构`afd`，用于对齐写入位图数据。
+函数调用`locate_bitmap1()`函数，定位到位图数据的偏移位置。
+然后，函数使用`posix_memalign()`函数分配一个4096字节对齐的缓冲区`buf`。
+接下来，使用一个循环遍历节点的索引`i`，从0到`bms->nodes-1`，对每个节点执行以下操作：
+- 如果`i`不为0，则将缓冲区`buf`的内容设置为全0。
+- 如果`i`为0，则将缓冲区`buf`的内容设置为全1，用于初始组装时将整个设备标记为已同步。
+- 将位图超级块的内容复制到缓冲区`buf`中。
+- 计算要写入的字节数`towrite`，根据位图偏移是否与8个扇区对齐来选择使用512字节或4096字节对齐。
+- 使用`awrite()`函数将缓冲区`buf`的数据写入到文件描述符`fd`中，每次写入最多4096字节。
+- 如果写入成功，则将`towrite`减去已写入的字节数。
+- 如果写入失败（返回值小于等于0），则跳出循环。
+- 在每次循环迭代后，如果`i`不为0，则将缓冲区`buf`的内容设置为全0，用于下一次写入。
+最后，调用`fsync()`函数刷新文件描述符`fd`的缓冲区到磁盘，并释放缓冲区`buf`的内存。
+如果在写入过程中发生错误，函数将返回相应的错误代码。
+该函数的作用是根据传入的更新类型，在MD v1.0元数据中写入位图信息。
+*/
 static int write_bitmap1(struct supertype *st, int fd, enum bitmap_update update)
 {
 	struct mdp_superblock_1 *sb = st->sb;
@@ -2728,6 +2768,16 @@ static int write_bitmap1(struct supertype *st, int fd, enum bitmap_update update
 	return rv;
 }
 
+//free_super1()的函数，用于释放MD v1.0元数据相关的内存和资源。
+//该函数接受一个指向struct supertype结构的指针st作为参数。
+//函数首先检查st->sb是否为非空，如果是，则释放st->sb指向的内存，并将其设置为NULL。
+//然后，使用一个循环遍历st->info链表，对每个节点执行以下操作：
+//将当前节点指针保存为di。
+//更新st->info为下一个节点。
+//如果di->fd（文件描述符）大于等于0，则关闭该文件描述符。
+//释放di指向的内存。
+//最后，将st->sb设置为NULL。
+//这个函数的作用是确保释放与MD v1.0元数据相关的所有内存和资源，以避免内存泄漏和资源泄漏。
 static void free_super1(struct supertype *st)
 {
 
@@ -2743,6 +2793,23 @@ static void free_super1(struct supertype *st)
 	st->sb = NULL;
 }
 
+//这是一个名为validate_geometry1()的函数，用于验证MD v1.0元数据的几何特征。
+//该函数的参数包括一个指向struct supertype结构的指针st，表示MD类型；
+//一个表示级别的整数level；一个表示布局的整数layout；一个表示RAID设备数的整数raiddisks；
+//一个指向块大小的整数指针chunk；一个表示设备大小的无符号长整型size；
+//一个表示数据偏移量的无符号长整型data_offset；一个指向子设备路径的字符指针subdev；
+//一个指向无符号长整型的指针freesize，用于返回可用的设备空间；
+//一个表示一致性策略的整数consistency_policy；
+//以及一个表示详细信息输出标志的整数verbose。
+//函数首先检查级别是否为容器级别，如果是，则打印错误消息并返回0。然后，如果chunk未设置，则将其设置为默认块大小。
+//接下来，函数检查是否提供了子设备路径。如果未提供子设备路径，则直接返回1。
+//如果minor_version小于0，表示未指定，需要设置默认值为2。
+//然后，函数尝试以独占模式打开子设备，并获取设备大小。
+//根据元数据版本和设备大小，计算数据偏移量data_offset和可用的设备空间freesize。
+//在计算数据偏移量时，根据元数据版本选择适当的偏移量。
+//如果版本为0，则将数据偏移量设置为0。如果版本为1或2，则根据设备大小、块大小和一致性策略选择合适的偏移量。
+//最后，如果设备空间小于所需的开销（overhead），则打印错误消息，并将可用的设备空间设置为0。
+//函数返回1表示验证成功，返回0表示验证失败。
 static int validate_geometry1(struct supertype *st, int level,
 			      int layout, int raiddisks,
 			      int *chunk, unsigned long long size,
@@ -2849,6 +2916,32 @@ dev_too_small_err:
 	return 0;
 }
 
+
+// 用于创建基于给定信息的 MD v1.0超级块（superblock）
+//这是一个函数`super1_make_v0()`，用于创建基于给定信息的MD v1.0超级块（superblock）。
+//该函数的参数包括一个指向`struct supertype`结构的指针`st`、一个指向`struct mdinfo`结构的指针`info`，以及一个指向`mdp_super_t`结构的指针`sb0`。
+//函数首先通过调用`posix_memalign()`来分配一个4096字节大小的内存块，并将其初始化为0。然后，将返回的内存块强制转换为`struct mdp_superblock_1`类型的指针`sb`。
+//接下来，函数使用提供的信息填充超级块的各个字段，包括：
+//- `magic`：设置为MD_SB_MAGIC，表示MD超级块的魔术数。
+//- `major_version`：设置为1，表示MD超级块的主要版本号。
+//- `set_uuid`：将其设置为提供的UUID。
+//- `set_name`：将其设置为`sb0->md_minor`的字符串表示。
+//- `ctime`：设置为提供的数组创建时间加1。
+//- `level`：设置为提供的数组级别。
+//- `layout`：设置为提供的数组布局。
+//- `size`：设置为提供的组件大小。
+//- `chunksize`：设置为提供的数组块大小。
+//- `raid_disks`：设置为提供的数组RAID设备数。
+//- `data_size`：根据数组级别确定设置为`size`或根据提供的设备大小设置为`st->ss->avail_size(st, st->devsize/512, 0)`。
+//- `resync_offset`：设置为`MaxSector`，表示不进行重同步。
+//- `max_dev`：设置为`MD_SB_DISKS`，表示最大设备数。
+//- `dev_number`：设置为提供的设备号。
+//- `utime`：设置为提供的数组更新时间。
+//- `super_offset`：设置为根据设备大小计算的偏移量。
+//- `device_uuid`：生成一个随机的设备UUID。
+//- `dev_roles`：根据提供的设备状态设置相应的角色。
+//最后，计算超级块的校验和`sb_csum`，并将其设置为超级块的相应字段。
+//函数返回指向创建的超级块的指针。
 void *super1_make_v0(struct supertype *st, struct mdinfo *info, mdp_super_t *sb0)
 {
 	/* Create a v1.0 superblock based on 'info'*/
