@@ -1851,6 +1851,18 @@ static int write_init_ppl1(struct supertype *st, struct mdinfo *info, int fd)
 
 #define META_BLOCK_SIZE 4096
 
+/* write_empty_r5l_meta_block函数用于在存储设备上写入空的R5L元数据块。它接受一个指向supertype结构的指针和文件描述符作为参数。
+该函数执行以下操作：
+初始化一个文件描述符对齐的结构，用于处理文件读写操作。
+使用posix_memalign函数为元数据块分配内存空间，并将其初始化为零。
+设置元数据块的各个字段，包括魔术值、版本号、元数据块大小、序列号和位置。
+计算元数据块的校验和，其中使用了存储设备的UUID。
+使用lseek64函数将文件指针移动到存储设备上元数据块的偏移量位置。
+使用awrite函数将元数据块写入存储设备。
+使用fsync函数刷新文件系统缓冲区。
+释放已分配的内存空间。
+如果写入失败，则打印错误消息并返回适当的错误代码。
+总的来说，write_empty_r5l_meta_block函数负责在存储设备上写入一个空的R5L元数据块，以准备存储设备作为RAID 5日志设备 */
 static int write_empty_r5l_meta_block(struct supertype *st, int fd)
 {
 	struct r5l_meta_block *mb;
@@ -1896,6 +1908,22 @@ fail_to_write:
 	return 1;
 }
 
+/*write_init_super1函数是用于将元数据初始化写入超级块版本1的函数。它接受一个指向supertype结构的指针作为参数，并在存储设备上写入相关的超级块和元数据信息。
+该函数执行以下操作：
+遍历存储设备列表（通过supertype结构中的info字段传递），为每个存储设备执行以下操作：
+检查存储设备的状态和属性，并根据需要设置超级块的标志和属性。
+根据存储设备的信息和已知的超级块，设置设备的UUID、事件数等信息。
+获取存储设备的大小和数据偏移量。
+根据超级块的版本和布局，计算超级块的偏移量和数据偏移量。
+如果需要，设置RAID 0布局的标志。
+计算超级块的校验和。
+将超级块写入存储设备。
+如果存储设备需要日志，写入空的R5L元数据块。
+如果超级块具有位图偏移量，则将位图写入存储设备。
+关闭存储设备的文件描述符。
+如果发生错误，则打印错误消息并返回适当的错误代码。
+总的来说，write_init_super1函数负责将初始化的元数据写入每个存储设备上的SUPER1，以准备创建或组装软件RAID阵列。
+*/
 static int write_init_super1(struct supertype *st)
 {
 	struct mdp_superblock_1 *sb = st->sb;
@@ -2110,6 +2138,7 @@ out:
 	return rv;
 }
 
+// 比较 SUPER1 超级块
 static int compare_super1(struct supertype *st, struct supertype *tst)
 {
 	/*
@@ -2149,6 +2178,22 @@ static int compare_super1(struct supertype *st, struct supertype *tst)
 	return 0;
 }
 
+/*
+这是一个名为load_super1()的函数，用于加载版本为1.x的超级块数据。
+函数首先释放之前加载的超级块数据，然后初始化相关变量和文件描述符。
+接下来，函数根据传入的元数据类型和文件描述符，根据不同的元数据版本执行以下操作：
+如果元数据类型为NULL或元数据版本为-1，则进行版本猜测。它尝试加载不同的元数据版本，并选择具有最新ctime值的版本作为匹配的版本。
+如果找到匹配的版本，则加载该版本的超级块数据，并将匹配的元数据类型赋值给st。
+如果没有找到匹配的版本，则返回2。
+如果元数据版本为0、1或2，则根据元数据版本计算超级块的偏移量。
+通过lseek64()函数将文件描述符定位到超级块的偏移位置。
+使用posix_memalign()函数分配超级块的内存，并读取超级块的数据。
+检查超级块的魔术数、版本号和偏移量是否正确。如果不正确，则释放超级块内存并返回2。
+将读取的超级块数据存储在st->sb字段中。
+检查是否存在位图超级块。如果存在，则读取位图超级块数据，并检查其有效性。如果无效，则清除超级块的位图标志。
+返回0表示成功加载超级块。
+该函数的作用是加载版本为1.x的超级块数据，并验证其有效性。它还负责检查和处理位图超级块。
+*/
 static int load_super1(struct supertype *st, int fd, char *devname)
 {
 	unsigned long long dsize;
@@ -2311,6 +2356,14 @@ static int load_super1(struct supertype *st, int fd, char *devname)
 	return 0;
 }
 
+/*match_metadata_desc1()的函数，用于根据元数据描述字符串arg匹配相应的元数据类型。
+函数首先分配一个struct supertype结构的内存，并将其字段初始化为适当的默认值。
+接下来，函数检查arg字符串的开头是否有多余的零，并将其忽略。
+然后，函数根据arg字符串的值与预定义的元数据版本进行比较，并设置st结构的minor_version字段为相应的值。
+如果匹配成功，函数返回指向st结构的指针，表示匹配的元数据类型。
+如果未匹配到任何元数据类型，则释放先前分配的内存，并返回NULL。
+该函数的作用是根据元数据描述字符串匹配相应的元数据类型，并返回匹配的元数据类型的结构指针。
+*/
 static struct supertype *match_metadata_desc1(char *arg)
 {
 	struct supertype *st = xcalloc(1, sizeof(*st));
@@ -2353,6 +2406,14 @@ static struct supertype *match_metadata_desc1(char *arg)
  * superblock type st, and reserving 'reserve' sectors for
  * a possible bitmap
  */
+/*这是一个名为`avail_size1()`的函数，用于计算具有给定设备大小`devsize`的设备上可用的空间大小。
+函数接受一个指向`struct supertype`结构的指针`st`，一个`__u64`类型的参数`devsize`，以及一个`unsigned long long`类型的参数`data_offset`。
+函数根据元数据的版本和特征映射字段中的位图偏移和PPL信息来确定位图和PPL占用的空间大小。如果设备大小小于24个扇区，则返回0，否则继续计算可用空间。
+如果`data_offset`参数为INVALID_SECTORS，表示未指定数据偏移量，则将数据偏移量设置为元数据结构中的数据偏移量字段。
+根据元数据的版本和数据偏移量，计算可用空间的大小，并考虑了坏块日志占用的空间。
+最后，根据元数据的版本和位图的位置，计算可用空间的大小，并返回结果。
+该函数的作用是根据元数据的版本和设备大小计算设备上可用的空间大小，考虑了位图、PPL和坏块日志占用的空间。
+*/
 static __u64 avail_size1(struct supertype *st, __u64 devsize,
 			 unsigned long long data_offset)
 {
